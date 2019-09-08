@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
         name = "remcmp",
-        version = "1.0.0",
+        version = "1.0.post1",
         author = "DimiDimit",
         author_email = "dmtrdmtrov@gmail.com",
         description = "Extensible program to compare local and remote directories.",
