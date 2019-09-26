@@ -1,15 +1,22 @@
 import argparse
 import copy
+import dataclasses
 import filecmp
-import importlib
 import logging
 import sys
+import tempfile
 import typing
 
 import colorama
+import fs
+import fs.base
 
-import remcmp
-from remcmp import Stat
+
+@dataclasses.dataclass
+class Stat:
+    summary: str
+    explanation: str
+    times: int = 0
 
 
 base_stats: typing.Dict[str, Stat] = {
@@ -48,61 +55,53 @@ def report_stat(stats: typing.Dict[str, Stat], stat: str, f: any, dir1: any, dir
     log_colored(s.explanation.format(f, dir1, dir2), level = level, color = color)
 
 
-def cmp_dirs(dir1: remcmp.Directory, dir2: remcmp.Directory, files_only: bool = False, shallow: bool = False,
-             stats: typing.Optional[typing.Dict[str, Stat]] = None) -> typing.Dict[str, Stat]:
+def cmp_dirs(dir1: fs.base.FS, dir2: fs.base.FS, stats: typing.Optional[typing.Dict[str, Stat]] = None) -> \
+        typing.Dict[str, Stat]:
     if stats is None:
         stats = copy.deepcopy(base_stats)
-    log_colored("Comparing directory", dir1, "with", dir2, level = logging.INFO, color = colorama.Fore.BLUE)
-    dir1lf = dir1.list()
-    dir1l = [p.name for p in dir1lf]
-    dir2lf = dir2.list()
-    dir2l = [p.name for p in dir2lf]
-    for f in dir1lf:
-        fe = f.name in dir2l
-        d2sp: remcmp.Path = dir2.get_sub_path(f.name) if fe else None
-        if isinstance(f, remcmp.Directory):
-            if files_only:
+    for d in dir1.walk.walk():
+        dp = d.path
+        if not dir2.exists(dp):
+            report_stat(stats, "dir_ex_one", dp, "dir 1", "dir 2")
+            continue
+        elif dir2.isfile(dp):
+            report_stat(stats, "dir_file", dp, "dir 1", "dir 2")
+            continue
+        log_colored("Comparing directory", dp, level = logging.INFO, color = colorama.Fore.BLUE)
+        for f in d.files:
+            f: fs.base.Info
+            fp = f.make_path(dp)
+            if not dir2.exists(fp):
+                report_stat(stats, "file_ex_one", fp, "dir 1", "dir 2")
                 continue
-            if not fe:
-                report_stat(stats, "dir_ex_one", f, dir1, dir2)
+            elif dir2.isdir(fp):
+                report_stat(stats, "file_dir", fp, "dir 1", "dir 2")
                 continue
-            if not isinstance(d2sp, remcmp.Directory):
-                report_stat(stats, "dir_file", f, dir1, dir2)
-                continue
-            cmp_dirs(f, d2sp, files_only, shallow, stats)
-        else:
-            if not fe:
-                report_stat(stats, "file_ex_one", f, dir1, dir2)
-                continue
-            if not isinstance(d2sp, remcmp.File):
-                report_stat(stats, "file_dir", f, dir1, dir2)
-                continue
-            f: remcmp.File
-            log_colored("Comparing", f.path, "with", d2sp.path, suffix = "...", color = colorama.Fore.CYAN)
-            if f.tmp_file_msg is not None:
-                log(f.tmp_file_msg, "1...")
-            with f.get_tmp_file() as temp1:
-                if d2sp.tmp_file_msg is not None:
-                    log(d2sp.tmp_file_msg, "2...")
-                with d2sp.get_tmp_file() as temp2:
-                    log("Comparing...")
-                    if filecmp.cmp(temp1.name, temp2.name, shallow):
-                        report_stat(stats, "eq", f, dir1, dir2, level = logging.INFO, color = colorama.Fore.GREEN)
-                    else:
-                        report_stat(stats, "not_eq", f, dir1, dir2, logging.INFO, color = colorama.Fore.RED)
-    for f in dir2lf:
-        nfe = f.name not in dir1l
-        d1sp: remcmp.Path = dir1.get_sub_path(f.name) if not nfe else None
-        if isinstance(f, remcmp.Directory):
-            if nfe:
-                report_stat(stats, "dir_ex_one", f, dir2, dir1)
-            elif not isinstance(d1sp, remcmp.Directory):
-                report_stat(stats, "dir_file", f, dir2, dir1)
-        else:
-            if nfe:
-                report_stat(stats, "file_ex_one", f, dir2, dir1)
-            elif not isinstance(d1sp, remcmp.File):
-                report_stat(stats, "file_dir", f, dir2, dir1)
+            log_colored("Comparing", fp, suffix = "...", color = colorama.Fore.CYAN)
+            with tempfile.NamedTemporaryFile() as f1, tempfile.NamedTemporaryFile() as f2:
+                dir1.download(fp, f1)
+                f1.flush()
+                dir2.download(fp, f2)
+                f2.flush()
+                if filecmp.cmp(f1.name, f2.name):
+                    report_stat(stats, "eq", f, dir1, dir2, level = logging.INFO, color = colorama.Fore.GREEN)
+                else:
+                    report_stat(stats, "not_eq", f, dir1, dir2, logging.INFO, color = colorama.Fore.RED)
+    for d in dir2.walk.walk():
+        dp = d.path
+        if not dir1.exists(dp):
+            report_stat(stats, "dir_ex_one", dp, "dir 2", "dir 1")
+            continue
+        elif dir1.isfile(dp):
+            report_stat(stats, "dir_file", dp, "dir 2", "dir 1")
+            continue
+        for f in d.files:
+            f: fs.base.Info
+            fp = f.make_path(dp)
+            if not dir1.exists(fp):
+                report_stat(stats, "file_ex_one", fp, "dir 2", "dir 1")
+            elif dir1.isdir(fp):
+                report_stat(stats, "file_dir", fp, "dir 2", "dir 1")
     return stats
 
 
@@ -111,14 +110,10 @@ def main():
     colorama.init()
     
     argp = argparse.ArgumentParser(description = "Remote compare directories.")
-    argp.add_argument('type1', help = "Type of the first directory to compare")
     argp.add_argument('dir1', help = "First directory to compare")
-    argp.add_argument('type2', help = "Type of the second directory to compare")
     argp.add_argument('dir2', help = "Second directory to compare")
-    argp.add_argument('-s', '--shallow', action = 'store_true',
-                      help = "Don't compare if dates and sizes are equal")
-    argp.add_argument('-f', '--files-only', action = 'store_true',
-                      help = "Do not recurse into folders, only compare the files")
+    # argp.add_argument('-f', '--files-only', action = 'store_true',
+    #                   help = "Do not recurse into folders, only compare the files")
     argp.add_argument('-c', '--no-color', action = 'store_true',
                       help = "Do not output colorful text")
     argp.add_argument('-lf', '--log-file', help = "Log into a file. This disables colored output")
@@ -136,14 +131,8 @@ def main():
     else:
         logging.basicConfig(format = "%(message)s", stream = sys.stdout, level = logging.getLevelName(
                 args.log_level.upper()) if args.log_level is not None else logging.INFO)
-    
-    try:
-        type1 = importlib.import_module(args.type1 + "cmp")
-        type2 = importlib.import_module(args.type2 + "cmp")
-    except ModuleNotFoundError as e:
-        log_colored("Module", e.name, "not found!", level = logging.FATAL)
-        sys.exit(1)
-    stats = cmp_dirs(type1.create_path(args.dir1, True), type2.create_path(args.dir2, True), args.files_only)
+
+    stats = cmp_dirs(fs.open_fs(args.dir1), fs.open_fs(args.dir2))
     log(level = SUMMARY)
     log_colored("Summary:", level = SUMMARY, color = colorama.Fore.BLUE + colorama.Style.BRIGHT)
     for s in stats.values():
