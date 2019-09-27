@@ -6,7 +6,7 @@ with open("README.md") as rf:
 
 setup(
         name = "remcmp",
-        version = "2.1",
+        version = "2.1.0.post1",
         author = "DimiDimit",
         author_email = "dmtrdmtrov@gmail.com",
         description = "Extensible program to compare local and remote directories.",
@@ -16,9 +16,12 @@ setup(
         packages = ["remcmp"],
         classifiers = [
             "Environment :: Console",
+            "License :: OSI Approved :: MIT License",
             "Natural Language :: English",
             "Operating System :: OS Independent",
-            "Programming Language :: Python :: 3"
+            "Programming Language :: Python :: 3 :: Only",
+            "Topic :: System :: Filesystems",
+            "Topic :: Utilities"
         ],
         install_requires = ["colorama", "fs"],
         entry_points = {
