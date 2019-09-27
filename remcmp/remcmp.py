@@ -10,22 +10,24 @@ import typing
 import colorama
 import fs
 import fs.base
+import fs.walk
 
 
 @dataclasses.dataclass
 class Stat:
     summary: str
     explanation: str
+    flag: int
     times: int = 0
 
 
 base_stats: typing.Dict[str, Stat] = {
-    "eq"         : Stat("Equal", "Equal"),
-    "not_eq"     : Stat("Not equal", "Not equal"),
-    "dir_ex_one" : Stat("Directory only exists on one side", "Directory {} exists in {} but not in {}"),
-    "dir_file"   : Stat("Directory is file on the other side", "Directory {} in {} is a file in {}"),
-    "file_ex_one": Stat("File only exists on one side", "File {} exists in {} but not in {}"),
-    "file_dir"   : Stat("File is directory on the other side", "File {} in {} is a directory in {}")
+    "eq"         : Stat("Equal", "Equal", 2),
+    "not_eq"     : Stat("Not equal", "Not equal", 4),
+    "dir_ex_one" : Stat("Directory only exists on one side", "Directory {} exists in {} but not in {}", 8),
+    "dir_file"   : Stat("Directory is file on the other side", "Directory {} in {} is a file in {}", 16),
+    "file_ex_one": Stat("File only exists on one side", "File {} exists in {} but not in {}", 32),
+    "file_dir"   : Stat("File is directory on the other side", "File {} in {} is a directory in {}", 64)
 }
 
 colored = True
@@ -55,11 +57,11 @@ def report_stat(stats: typing.Dict[str, Stat], stat: str, f: any, dir1: any, dir
     log_colored(s.explanation.format(f, dir1, dir2), level = level, color = color)
 
 
-def cmp_dirs(dir1: fs.base.FS, dir2: fs.base.FS, stats: typing.Optional[typing.Dict[str, Stat]] = None) -> \
-        typing.Dict[str, Stat]:
+def cmp_dirs(dir1: fs.base.FS, dir2: fs.base.FS, files_only: bool = False,
+             stats: typing.Optional[typing.Dict[str, Stat]] = None) -> typing.Dict[str, Stat]:
     if stats is None:
         stats = copy.deepcopy(base_stats)
-    for d in dir1.walk.walk():
+    for d in dir1.walk.walk() if not files_only else [fs.walk.Step("/", [], dir1.filterdir("/", exclude_dirs = ["*"]))]:
         dp = d.path
         if not dir2.exists(dp):
             report_stat(stats, "dir_ex_one", dp, "dir 1", "dir 2")
@@ -112,8 +114,8 @@ def main():
     argp = argparse.ArgumentParser(description = "Remote compare directories.")
     argp.add_argument('dir1', help = "First directory to compare")
     argp.add_argument('dir2', help = "Second directory to compare")
-    # argp.add_argument('-f', '--files-only', action = 'store_true',
-    #                   help = "Do not recurse into folders, only compare the files")
+    argp.add_argument('-f', '--files-only', action = 'store_true',
+                      help = "Do not recurse into folders, only compare the files")
     argp.add_argument('-c', '--no-color', action = 'store_true',
                       help = "Do not output colorful text")
     argp.add_argument('-lf', '--log-file', help = "Log into a file. This disables colored output")
@@ -132,13 +134,16 @@ def main():
         logging.basicConfig(format = "%(message)s", stream = sys.stdout, level = logging.getLevelName(
                 args.log_level.upper()) if args.log_level is not None else logging.INFO)
 
-    stats = cmp_dirs(fs.open_fs(args.dir1), fs.open_fs(args.dir2))
+    stats = cmp_dirs(fs.open_fs(args.dir1), fs.open_fs(args.dir2), args.files_only)
     log(level = SUMMARY)
     log_colored("Summary:", level = SUMMARY, color = colorama.Fore.BLUE + colorama.Style.BRIGHT)
+    exit_flags = 0
     for s in stats.values():
         if s.times <= 0:
             continue
+        exit_flags |= s.flag
         log(s.summary, ": ", s.times, sep = "", level = SUMMARY)
+    sys.exit(exit_flags)
 
 
 if __name__ == '__main__':
