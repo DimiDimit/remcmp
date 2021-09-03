@@ -1,3 +1,4 @@
+*You probably want to use `rsync` instead.*
 # remcmp
 Extensible program to compare local and remote directories.
 
